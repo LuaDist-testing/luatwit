@@ -93,10 +93,11 @@ end
 function api:raw_call(decl, args, defaults)
     args = args or {}
     local name = decl.name or "raw_call"
-    assert(decl.rules(args, name))
+    local rules = decl.rules
+    if rules then assert(rules(args, name)) end
 
     local base_url = decl.base_url or self.resources._base_url
-    local url, request = build_request(base_url, decl.path, args, decl.rules and decl.rules.optional, defaults)
+    local url, request = build_request(base_url, decl.path, args, rules and rules.optional, defaults)
 
     local function parse_response(body, res_code, headers)
         local data, err, code = self:_parse_response(body, res_code, headers, decl.res_type)
@@ -132,7 +133,7 @@ local function parse_json(self, str, tname, code)
     if type(json_data) ~= "table" then
         return json_data
     end
-    if code ~= 200 then
+    if code < 200 or code >= 300 then
         tname = "error"
     end
     if tname then
@@ -160,7 +161,7 @@ function api:_parse_response(body, res_code, headers, tname)
     end
     local content_type = headers:get_content_type()
     -- HTTP request failed, the error message is returned as json
-    if res_code ~= 200 and content_type ~= "application/json" then
+    if (res_code < 200 or res_code >= 300) and content_type ~= "application/json" then
         return nil, headers[1], res_code
     end
     if content_type == "application/json" then

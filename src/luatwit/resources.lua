@@ -23,7 +23,7 @@ _M._authorize_url = "https://api.twitter.com/oauth/authorize"
 local resource_base = {
     _type = "resource",
     default_args = {
-        stringify_ids = true,
+        stringify_ids = not common.has_64bit_int or nil,
         oauth_callback = "oob",
         stringify_friend_ids = true,
     },
@@ -211,7 +211,25 @@ _M.lookup_tweets = GET "statuses/lookup"
 --- Upload media (images) to Twitter, to use in a Tweet or Twitter-hosted Card.
 _M.upload_media = POST "media/upload"
     :args{
-        media = required "file",
+        media = "file",
+        media_data = "base64",
+        additional_owners = "integer_list",
+    }
+    :type "media"
+    :base_url "https://upload.twitter.com/1.1/%s.json"
+    :multipart()
+
+--- Upload videos or chunked images to Twitter for use in a Tweet or Twitter-hosted Card.
+_M.upload_media_chunked = POST "media/upload"
+    :args{
+        command = required "string",
+        total_bytes = "integer",
+        media_type = "string",
+        additional_owners = "integer_list",
+        media_id = "integer",
+        media_data = "base64",
+        media = "file",
+        segment_index = "integer",
     }
     :type "media"
     :base_url "https://upload.twitter.com/1.1/%s.json"
@@ -246,6 +264,7 @@ _M.get_received_dms = GET "direct_messages"
         count = "integer",
         include_entities = "boolean",
         skip_status = "boolean",
+        full_text = "boolean",
     }
     :type "dm_list"
 
@@ -257,6 +276,7 @@ _M.get_sent_dms = GET "direct_messages/sent"
         count = "integer",
         page = "integer",
         include_entities = "boolean",
+        full_text = "boolean",
     }
     :type "dm_list"
 
@@ -264,6 +284,7 @@ _M.get_sent_dms = GET "direct_messages/sent"
 _M.get_dm = GET "direct_messages/show"
     :args{
         id = required "integer",
+        full_text = "boolean",
     }
     :type "dm"
 
@@ -456,7 +477,7 @@ _M.set_profile_background_image = POST "account/update_profile_background_image"
         tile = "boolean",
         include_entities = "boolean",
         skip_status = "boolean",
-        use = "boolean",
+        media_id = "integer",
     }
     :type "user"
 

@@ -1,17 +1,17 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "luatwit"
-version = "0.3.2-1"
+version = "0.3.3-1"
 
 -- LuaDist source
 source = {
-  tag = "0.3.2-1",
+  tag = "0.3.3-1",
   url = "git://github.com/LuaDist-testing/luatwit.git"
 }
 -- Original source
 -- source = {
 --     url = "git://github.com/darkstalker/LuaTwit.git",
---     tag = "0.3.2",
+--     tag = "0.3.3",
 -- }
 
 description = {
