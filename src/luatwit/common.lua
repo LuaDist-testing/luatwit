@@ -46,8 +46,13 @@ end
 
 local type_handlers = {}
 
--- Builds a rule table from it's declaration in resources.
-local function build_rules(args_decl)
+local rule_mt   -- (defined below)
+
+--- Builds a rule checker from a rule declaration table.
+--
+-- @param args_decl     Table with argument rules.
+-- @return              A callable rule table.
+function _M.build_rules(args_decl)
     local req_list, opt_list = {}, {}
     for name, decl in pairs(args_decl) do
         assert(type(name) == "string", "argument name must be a string")
@@ -68,7 +73,7 @@ local function build_rules(args_decl)
         local list = required and req_list or opt_list
         list[name] = handler
     end
-    return { required = req_list, optional = opt_list }
+    return setmetatable({ required = req_list, optional = opt_list }, rule_mt)
 end
 
 -- type "any": accept anything
@@ -165,12 +170,12 @@ end
 
 --- Checks if the arguments in the specified table match the rules.
 --
--- @param args      Table with arguments to be checked.
 -- @param rules     Rules to check against.
+-- @param args      Table with arguments to be checked.
 -- @param r_name    Name of the resource that is being checked (for error messages).
 -- @return          The `args` table with the values coerced to their types, or `nil` on error.
 -- @return          The error string if `args` is invalid.
-function _M.check_args(args, rules, r_name)
+function _M.check_args(rules, args, r_name)
     r_name = r_name or "error"
     if type(args) ~= "table" then
         return nil, r_name .. ": arguments must be passed in a table"
@@ -204,13 +209,18 @@ function _M.check_args(args, rules, r_name)
     return args
 end
 
+-- Allows calling check_args as method.rules()
+rule_mt = {
+    __call = _M.check_args,
+}
+
 local resource_builder_mt = {
     _type = "resource_builder",
 }
 resource_builder_mt.__index = resource_builder_mt
 
 function resource_builder_mt:args(args_decl)
-    self.rules = build_rules(args_decl)
+    self.rules = _M.build_rules(args_decl)
     return self
 end
 
@@ -250,6 +260,49 @@ function _M.resource_builder(method, path)
         path = path,
     }
     return setmetatable(res, resource_builder_mt)
+end
+
+--- Base class for objects.
+-- @type object
+local object = {}
+object._class = object
+_M.object = object
+
+--- Creates a new class that extends this object.
+--
+-- @return      New class.
+function object:extend()
+    local deriv = { __index = self._class }
+    deriv._class = deriv
+    return setmetatable(deriv, deriv)
+end
+
+--- Creates a new instance of the class.
+--
+-- @param ...   Constructor arguments, passed to `self:_init()`.
+-- @return      New instance of the class, or `nil` on error.
+function object:new(...)
+    local obj = { __index = self._class }
+    local err = setmetatable(obj, obj):_init(...)
+    if err ~= nil then
+        return nil, err
+    end
+    return obj
+end
+
+-- This will be called when the derived class has no constructor.
+function object._init()
+    -- empty
+end
+
+--- Binds a function to this object
+--
+-- @param fn    Function to be bound.
+-- @return      New function that will call `fn(self, ...)`
+function object:bind(fn)
+    return function(...)
+        return fn(self, ...)
+    end
 end
 
 return _M

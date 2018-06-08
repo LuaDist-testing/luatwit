@@ -7,7 +7,6 @@ local assert, error, ipairs, next, pairs, require, setmetatable, type =
       assert, error, ipairs, next, pairs, require, setmetatable, type
 local oauth = require "oauth_light"
 local json = require "dkjson"
-local http = require "luatwit.http"
 local common = require "luatwit.common"
 
 local _M = {}
@@ -94,15 +93,15 @@ end
 function api:raw_call(decl, args, defaults)
     args = args or {}
     local name = decl.name or "raw_call"
-    assert(common.check_args(args, decl.rules, name))
+    assert(decl.rules(args, name))
 
     local base_url = decl.base_url or self.resources._base_url
     local url, request = build_request(base_url, decl.path, args, decl.rules and decl.rules.optional, defaults)
 
     local function parse_response(body, res_code, headers)
-        local data, err = self:_parse_response(body, res_code, headers, decl.res_type)
+        local data, err, code = self:_parse_response(body, res_code, headers, decl.res_type)
         if data == nil then
-            return nil, err
+            return nil, err, code
         end
         if type(data) == "table" and data._type then
             data._source = name
@@ -162,7 +161,7 @@ function api:_parse_response(body, res_code, headers, tname)
     local content_type = headers:get_content_type()
     -- HTTP request failed, the error message is returned as json
     if res_code ~= 200 and content_type ~= "application/json" then
-        return nil, headers[1]
+        return nil, headers[1], res_code
     end
     if content_type == "application/json" then
         return parse_json(self, body, tname, res_code)
@@ -192,15 +191,11 @@ function api:set_callback_handler(fn)
     self.callback_handler = fn
 end
 
-local http_request_args = {
-    required = {
-        url = "string",
-    },
-    optional = {
-        method = "string",
-        body = "any",   -- string or table
-        headers = "table",
-    },
+local http_request_args = common.build_rules{
+    url = { type = "string", required = true },
+    method = "string",
+    body = "any",   -- string or table
+    headers = "table",
 }
 
 --- Performs an HTTP request.
@@ -208,20 +203,20 @@ local http_request_args = {
 --
 -- @param args  Table with request arguments (method, url, body, headers, _async, _callback, _stream).
 -- @return      Request response.
--- @see luatwit.http.request, luatwit.http.service:http_request
+-- @see luatwit.http.service:request, luatwit.http.service:async_request
 function api:http_request(args)
-    assert(common.check_args(args, http_request_args, "http_request"))
+    assert(http_request_args(args, "http_request"))
     assert(not args._callback or self.callback_handler, "need callback handler")
     assert(not args._stream or args._async or args._callback, "streaming requires async interface")
 
     if args._async or args._callback then
-        local fut = self.async:http_request(args.method, args.url, args.body, args.headers, args._filter, args._stream)
+        local fut = self.http:async_request(args.method, args.url, args.body, args.headers, args._filter, args._stream)
         if args._callback then
             return fut, self.callback_handler(fut, args._callback)
         end
         return fut
     else
-        return http.request(args.method, args.url, args.body, args.headers, args._filter)
+        return self.http:request(args.method, args.url, args.body, args.headers, args._filter)
     end
 end
 
@@ -230,15 +225,11 @@ local function api_index(self, key)
     return api[key] or self.resources[key]
 end
 
-local api_new_args = {
-    required = {
-        consumer_key = "string",
-        consumer_secret = "string",
-    },
-    optional = {
-        oauth_token = "string",
-        oauth_token_secret = "string",
-    },
+local api_new_args = common.build_rules{
+    consumer_key = { type = "string", required = true },
+    consumer_secret = { type = "string", required = true },
+    oauth_token = "string",
+    oauth_token_secret = "string",
 }
 
 --- Creates a new `api` object with the supplied keys.
@@ -252,7 +243,7 @@ local api_new_args = {
 -- @return          New instance of the `api` class.
 -- @see luatwit.objects.access_token
 function api.new(keys, http_svc, resources, objects)
-    assert(common.check_args(keys, api_new_args, "api.new"))
+    assert(api_new_args(keys, "api.new"))
 
     local self = {
         __index = api_index,
@@ -267,7 +258,7 @@ function api.new(keys, http_svc, resources, objects)
             sig_method = "HMAC-SHA1",
             use_auth_header = true,
         },
-        async = http_svc or http.service.new(),
+        http = http_svc or require("luatwit.http").service:new(),
     }
     self._get_client = function() return self end
 

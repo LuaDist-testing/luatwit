@@ -3,15 +3,19 @@
 -- @module  luatwit.http
 -- @author  darkstalker <https://github.com/darkstalker>
 -- @license MIT/X11
-local ipairs, pairs, pcall, select, setmetatable, table_concat, table_remove, type =
-      ipairs, pairs, pcall, select, setmetatable, table.concat, table.remove, type
+local ipairs, next, pairs, pcall, select, setmetatable, table_concat, table_remove, tostring, type =
+      ipairs, next, pairs, pcall, select, setmetatable, table.concat, table.remove, tostring, type
 local curl = require "lcurl"
+local common = require "luatwit.common"
 
 local table_pack = table.pack or function(...) return { n = select("#", ...), ... } end
 local table_unpack = table.unpack or unpack
 local unpackn = function(t) return table_unpack(t, 1, t.n) end
 
 local _M = {}
+
+-- HTTP user agent string
+_M.user_agent = "LuaTwit/0.3.2 libcurl/" .. curl.version_info().version
 
 -- HTTP Headers returned by the requests.
 local headers_mt = {}
@@ -146,6 +150,7 @@ end
 
 -- Extracts the stream data by splitting \r\n separated sections.
 local function process_stream(input, output, filter, get_headers)
+    if next(input) == nil then return end
     local buffer = table_concat(input)
     local endpos = 1
     for line, pos in buffer:gmatch "(.-)\r\n()" do
@@ -212,20 +217,17 @@ end
 --- HTTP service object.
 -- Executes HTTP requests on background (with `curl.multi`).
 -- @type service
-local service = {}
-service.__index = service
+local service = common.object:extend()
 _M.service = service
 
 --- Creates a new async HTTP client.
 --
 -- @return          New instance of the async client.
-function service.new()
-    local self = {
-        pending = 0,
-        store = {},
-    }
+-- @constructor
+function service:_init()
+    self.pending = 0
+    self.store = {}
     self.curl_multi = curl.multi()
-    return setmetatable(self, service)
 end
 
 --- Sets the connection limits.
@@ -251,7 +253,7 @@ function service:update()
             local handle, ok, err = self.curl_multi:info_read()
             if handle == 0 then break end
             if not ok then
-                self.store[handle].error = err
+                self.store[handle].error = tostring(err)
             end
             self.store[handle].code = handle:getinfo(curl.INFO_RESPONSE_CODE)
             self.curl_multi:remove_handle(handle)
@@ -337,6 +339,9 @@ local function build_easy_handle(method, url, body, headers)
     local handle = curl.easy()
     :setopt_url(url)
     :setopt_accept_encoding ""
+    :setopt_low_speed_limit(1)
+    :setopt_low_speed_time(90)
+    :setopt_useragent(_M.user_agent)
     :setopt_writefunction(table_writer, resp_body)
     :setopt_headerfunction(table_writer, resp_headers)
     if method then handle:setopt_customrequest(method) end
@@ -370,7 +375,7 @@ end
 -- @param filter    Function to be called on the result data.
 -- @param is_stream Indicates if it's a streaming connection or not.
 -- @return          `future` object with the result.
-function service:http_request(method, url, body, headers, filter, is_stream)
+function service:async_request(method, url, body, headers, filter, is_stream)
     local request, resp_body, resp_headers = build_easy_handle(method, url, body, headers)
     self.store[request] = { body = resp_body, headers = resp_headers }
     self.pending = self.pending + 1
@@ -382,8 +387,6 @@ function service:http_request(method, url, body, headers, filter, is_stream)
     end
 end
 
---- @section end
-
 --- Performs an HTTP request.
 --
 -- @param method    HTTP method.
@@ -394,11 +397,11 @@ end
 -- @return          Response body or `nil` on error.
 -- @return          Status code.
 -- @return          Response headers.
-function _M.request(method, url, body, headers, filter)
+function service:request(method, url, body, headers, filter)
     local request, resp_body, resp_headers = build_easy_handle(method, url, body, headers)
     local ok, err = pcall(request.perform, request)
     if not ok then
-        return nil, err
+        return nil, tostring(err)
     end
     local code = request:getinfo(curl.INFO_RESPONSE_CODE)
     request:close()
