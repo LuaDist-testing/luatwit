@@ -1,18 +1,10 @@
--- This file was automatically generated for the LuaDist project.
+package = "LuaTwit"
+version = "0.3.1-1"
 
-package = "luatwit"
-version = "0.3.0-1"
-
--- LuaDist source
 source = {
-  tag = "0.3.0-1",
-  url = "git://github.com/LuaDist-testing/luatwit.git"
+    url = "git://github.com/darkstalker/LuaTwit.git",
+    tag = "0.3.1",
 }
--- Original source
--- source = {
---     url = "git://github.com/darkstalker/LuaTwit.git",
---     tag = "0.3.0",
--- }
 
 description = {
     summary = "Lua library for accessing the Twitter REST and Streaming API v1.1",
@@ -35,6 +27,7 @@ build = {
     type = "builtin",
     modules = {
         luatwit = "src/luatwit.lua",
+        ["luatwit.common"] = "src/luatwit/common.lua",
         ["luatwit.http"] = "src/luatwit/http.lua",
         ["luatwit.objects"] = "src/luatwit/objects.lua",
         ["luatwit.resources"] = "src/luatwit/resources.lua",

@@ -1,9 +1,18 @@
-package = "LuaTwit"
-version = "scm-1"
+-- This file was automatically generated for the LuaDist project.
 
+package = "luatwit"
+version = "0.3.1-1"
+
+-- LuaDist source
 source = {
-    url = "git://github.com/darkstalker/LuaTwit.git",
+  tag = "0.3.1-1",
+  url = "git://github.com/LuaDist-testing/luatwit.git"
 }
+-- Original source
+-- source = {
+--     url = "git://github.com/darkstalker/LuaTwit.git",
+--     tag = "0.3.1",
+-- }
 
 description = {
     summary = "Lua library for accessing the Twitter REST and Streaming API v1.1",

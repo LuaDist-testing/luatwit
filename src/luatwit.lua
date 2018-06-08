@@ -3,18 +3,14 @@
 -- @module  luatwit
 -- @author  darkstalker <https://github.com/darkstalker>
 -- @license MIT/X11
-local assert, error, io_open, ipairs, next, pairs, require, select, setmetatable, type =
-      assert, error, io.open, ipairs, next, pairs, require, select, setmetatable, type
+local assert, error, ipairs, next, pairs, require, setmetatable, type =
+      assert, error, ipairs, next, pairs, require, setmetatable, type
 local oauth = require "oauth_light"
 local json = require "dkjson"
 local http = require "luatwit.http"
-local util = require "luatwit.util"
+local common = require "luatwit.common"
 
 local _M = {}
-
---- Gets the type of the supplied object.
--- @see luatwit.util.type
-_M.type = util.type
 
 --- Class prototype that implements the API calls.
 -- Methods are created on demand from the definitions in the `self.resources` table (by default `luatwit.resources`).
@@ -89,15 +85,16 @@ end
 --
 -- @param decl      Resource declaration (from `luatwit.resources`).
 -- @param args      Table with the method arguments.
--- @param defaults  Default method arguments.
+-- @param defaults  Default method arguments (used internally).
 -- @return          A table with the decoded JSON data from the response, or `nil` on error.
 --                  If the option `_async` or `_callback` is set, instead it returns a `luatwit.http.future` object.
+--                  If a streaming method is called, instead it returns a `luatwit.http.stream` object.
 -- @return          HTTP headers. On error, instead it will be a string or a `luatwit.objects.error` describing the error.
 -- @return          If an API error ocurred, the HTTP headers of the request.
 function api:raw_call(decl, args, defaults)
     args = args or {}
     local name = decl.name or "raw_call"
-    assert(util.check_args(args, decl.rules, name))
+    assert(common.check_args(args, decl.rules, name))
 
     local base_url = decl.base_url or self.resources._base_url
     local url, request = build_request(base_url, decl.path, args, decl.rules and decl.rules.optional, defaults)
@@ -128,15 +125,15 @@ function api:raw_call(decl, args, defaults)
 end
 
 -- Parses a JSON string and applies type metatables.
-local function parse_json(self, str, tname)
-    local json_data, _, err = json.decode(str, nil, nil, nil)
+local function parse_json(self, str, tname, code)
+    local json_data, _, err = json.decode(str, 1, _M.null, nil)
     if json_data == nil then
         return nil, err
     end
     if type(json_data) ~= "table" then
         return json_data
     end
-    if json_data.errors then
+    if code ~= 200 then
         tname = "error"
     end
     if tname then
@@ -153,7 +150,7 @@ local function parse_oauth_token(self, body, tname)
     end
     self.oauth_config.oauth_token = token.oauth_token
     self.oauth_config.oauth_token_secret = token.oauth_token_secret
-    return apply_types(self, token, "access_token")
+    return apply_types(self, token, tname)
 end
 
 -- Parses the response body according to the content-type value.
@@ -168,7 +165,7 @@ function api:_parse_response(body, res_code, headers, tname)
         return nil, headers[1]
     end
     if content_type == "application/json" then
-        return parse_json(self, body, tname)
+        return parse_json(self, body, tname, res_code)
     elseif tname == "access_token" then -- twitter returns "text/html" as content-type for the tokens..
         return parse_oauth_token(self, body, tname)
     else
@@ -186,7 +183,7 @@ end
 
 --- Sets the callback handler function.
 -- The callback handler is called after every async request that uses the `_callback` option. This function has to do the
--- necessary setup to watch the future and send the result to the callback when it's ready.
+-- necessary setup to watch the future/stream and send the result to the callback when it's ready.
 -- This way we can work with external event loops in a transparent way.
 --
 -- @param fn    Callback handler function. This is called as `fn(fut, callback)`, where `fut` is the result from an async
@@ -210,9 +207,10 @@ local http_request_args = {
 -- This method allows using the library features (like callback_handler) with regular HTTP requests.
 --
 -- @param args  Table with request arguments (method, url, body, headers, _async, _callback, _stream).
--- @return      Request response, or a `luatwit.http.future` object if the `_async` or `_callback` options were used.
+-- @return      Request response.
+-- @see luatwit.http.request, luatwit.http.service:http_request
 function api:http_request(args)
-    assert(util.check_args(args, http_request_args, "http_request"))
+    assert(common.check_args(args, http_request_args, "http_request"))
     assert(not args._callback or self.callback_handler, "need callback handler")
     assert(not args._stream or args._async or args._callback, "streaming requires async interface")
 
@@ -244,16 +242,17 @@ local api_new_args = {
 }
 
 --- Creates a new `api` object with the supplied keys.
--- An object created with only the consumer keys must call `api:start_login` and `api:confirm_login` to get the access token,
+-- An object created with only the consumer keys must call `api:oauth_request_token` and `api:oauth_access_token` to get the access token,
 -- otherwise it won't be able to make API calls.
 --
 -- @param keys      Table with the OAuth keys (consumer_key, consumer_secret, oauth_token, oauth_token_secret).
+-- @param http_svc  HTTP service instance (default new instance of `luatwit.http.service`).
 -- @param resources Table with the API interface definition (default `luatwit.resources`).
 -- @param objects   Table with the API objects definition (default `luatwit.objects`).
 -- @return          New instance of the `api` class.
 -- @see luatwit.objects.access_token
-function api.new(keys, resources, objects)
-    assert(util.check_args(keys, api_new_args, "api.new"))
+function api.new(keys, http_svc, resources, objects)
+    assert(common.check_args(keys, api_new_args, "api.new"))
 
     local self = {
         __index = api_index,
@@ -268,7 +267,7 @@ function api.new(keys, resources, objects)
             sig_method = "HMAC-SHA1",
             use_auth_header = true,
         },
-        async = http.service.new(),
+        async = http_svc or http.service.new(),
     }
     self._get_client = function() return self end
 
@@ -281,57 +280,6 @@ function api.new(keys, resources, objects)
     end
 
     return setmetatable(self, self)
-end
-
---- @section end
-
-local oauth_key_names = { "consumer_key", "consumer_secret", "oauth_token", "oauth_token_secret" }
-
---- Helper to load OAuth keys from text files.
--- Key files are loaded as `key = value` pairs.
--- It also accepts tables as arguments (useful when using `require`).
---
--- @param ...   Filenames (config files) or tables with the keys to load.
--- @return      Table with the keys found.
-function _M.load_keys(...)
-    local keys = {}
-    for i = 1, select('#', ...) do
-        local source = select(i, ...)
-        local ts = type(source)
-        if ts == "string" then
-            source = util.read_config(source)
-        elseif ts == "nil" then
-            source = {}
-        elseif ts ~= "table" then
-            error("argument #" .. i .. ": invalid type " .. ts, 2)
-        end
-        for _, k in ipairs(oauth_key_names) do
-            local v = source[k]
-            if v ~= nil then
-                keys[k] = v
-            end
-        end
-    end
-    return keys
-end
-
---- Loads a file and prepares it for a multipart request.
---
--- @param filename  File to be read.
--- @return          On success, a table with the file contents. On error `nil`.
--- @return          The error message in case of failure.
--- @see luatwit.resources.upload_media
-function _M.attach_file(filename)
-    local file, err = io_open(filename, "rb")
-    if file == nil then
-        return nil, err
-    end
-    local res = {
-        filename = filename:match "[^/]*$",
-        data = file:read "*a",
-    }
-    file:close()
-    return res
 end
 
 return _M
