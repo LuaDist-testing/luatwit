@@ -3,42 +3,18 @@
 -- @module  luatwit.util
 -- @author  darkstalker <https://github.com/darkstalker>
 -- @license MIT/X11
-local assert, error, ipairs, pairs, setmetatable, table_concat, tonumber, tostring, type =
-      assert, error, ipairs, pairs, setmetatable, table.concat, tonumber, tostring, type
+local assert, error, io_lines, ipairs, pairs, setmetatable, table_concat, tonumber, tostring, type =
+      assert, error, io.lines, ipairs, pairs, setmetatable, table.concat, tonumber, tostring, type
 
 local _M = {}
 
---- Gets the type of the supplied object or the _type value if present.
+--- Gets the type of the supplied object.
 --
 -- @param obj       Any value.
--- @return          The type of the supplied object.
+-- @return          The `_type` field if it's a table. If not present or not a table, the Lua type.
 function _M.type(obj)
     local t_obj = type(obj)
-    if t_obj == "table" then
-        return obj._type or t_obj
-    else
-        return t_obj
-    end
-end
-
---- Copies key-value pairs from one table to another and applies a function to the values.
--- @param dest      Destination table.
--- @param src       Source table.
--- @param fn        Function applied to values before assigning them.
---                  It's called as `fn(value, key)` for each key in `src`,
---                  then the result is assigned to `dest[key]`, unless it's `nil`.
--- @return          The `dest` argument.
-function _M.map_copy(dest, src, fn)
-    if not fn then
-        fn = function(v) return v end
-    end
-    for k, v in pairs(src) do
-        local res = fn(v, k)
-        if res ~= nil then
-            dest[k] = res
-        end
-    end
-    return dest
+    return t_obj == "table" and obj._type or t_obj
 end
 
 -- Returns a string with the arguments on a set of rules.
@@ -223,7 +199,7 @@ end
 -- @return          The result of the API call.
 -- @see luatwit.api.raw_call
 function _M.resource_call(res, client, args)
-    return client:raw_call(res.method, res.path, args, res.multipart, res.base_url, res.res_type, res.rules, res.default_args, res.name)
+    return client:raw_call(res, args, res.default_args)
 end
 
 --- Performs an API call with the data from an object returned by other API calls.
@@ -234,7 +210,7 @@ end
 function _M.object_call(obj, args)
     local client = obj._get_client()
     local res = client.resources[obj._source]
-    return client:raw_call(res.method, res.path, args, res.multipart, res.base_url, res.res_type, res.rules, obj._request, obj._source)
+    return client:raw_call(res, args, obj._request)
 end
 
 local resource_builder_mt = {
@@ -262,6 +238,11 @@ function resource_builder_mt:base_url(url)
     return self
 end
 
+function resource_builder_mt:stream()
+    self.stream = true
+    return self
+end
+
 function resource_builder_mt:finish(res_name, mt)
     self.name = res_name
     return setmetatable(self, mt)
@@ -280,45 +261,24 @@ function _M.resource_builder(method, path)
     return setmetatable(res, resource_builder_mt)
 end
 
---- Creates a list from a table by joining key-value pairs.
+--- Reads a simple `key = value` style config file.
 --
--- @param tbl       Source table.
--- @param sep       Separator used to join the keys and values.
--- @return          List table.
-function _M.join_pairs(tbl, sep)
-    local res = {}
-    for k, v in pairs(tbl) do
-        res[#res + 1] = k .. sep .. v
-    end
-    return res
-end
-
---- Extracts key-value pairs from a HTTP headers list.
---
--- @param list      List table with the header strings.
--- @return          Headers table.
-function _M.parse_headers(list)
-    local headers = {}
-    for _, line in ipairs(list) do
-        line = line:gsub("\r?\n$", "")
-        local k, v = line:match "^([^:]+): (.*)"
-        if not k then   -- status line
-            if line ~= "" then
-                headers[#headers + 1] = line
+-- @param filename  File to be read.
+-- @return          Table with the config values.
+function _M.read_config(filename)
+    local cfg = {}
+    local n = 1
+    for line in io_lines(filename) do
+        if line:sub(1, 1) ~= "#" then
+            local k, v = line:match "^%s*([^%s=]+)%s*=%s*(.*)"
+            if not k then
+                error("error parsing config at line " .. n)
             end
-        else
-            headers[k:lower()] = v  -- case insensitive
+            cfg[k] = v
         end
+        n = n + 1
     end
-    return headers
-end
-
---- Appends data to a table.
---
--- @param tbl       Destination table.
--- @param data      Data to append.
-function _M.table_writer(tbl, data)
-    tbl[#tbl + 1] = data
+    return cfg
 end
 
 return _M

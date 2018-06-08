@@ -403,8 +403,14 @@ end
 
 -- adds the content of a tweet list to the specified ListBox
 local function ui_append_tweet_list(list, tl)
-    for _, tweet in ipairs(tl) do
+    for i, tweet in ipairs(tl) do
         ui_append_tweet(list, tweet)
+        -- process some events to prevent UI freeze
+        if i % 5 == 0 then
+            while Gtk.events_pending() do
+                Gtk.main_iteration()
+            end
+        end
     end
 end
 
@@ -441,10 +447,11 @@ local requests = {}
 
 -- checks if any of the requests are done and dispatches the callbacks
 local function update_requests()
+    client.async:update()
     local n = #requests
     while n > 0 do
         local fut, callback = unpack(requests[n])
-        local ready, res, hdr = fut:peek()
+        local ready, res, hdr = fut:peek(true)
         if ready then
             table.remove(requests, n)
             if res == nil then  -- error

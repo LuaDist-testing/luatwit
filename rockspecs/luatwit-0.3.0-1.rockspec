@@ -1,8 +1,9 @@
 package = "LuaTwit"
-version = "scm-1"
+version = "0.3.0-1"
 
 source = {
     url = "git://github.com/darkstalker/LuaTwit.git",
+    tag = "0.3.0",
 }
 
 description = {

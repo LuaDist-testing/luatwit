@@ -1,23 +1,23 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "luatwit"
-version = "0.2.0-1"
+version = "0.3.0-1"
 
 -- LuaDist source
 source = {
-  tag = "0.2.0-1",
+  tag = "0.3.0-1",
   url = "git://github.com/LuaDist-testing/luatwit.git"
 }
 -- Original source
 -- source = {
 --     url = "git://github.com/darkstalker/LuaTwit.git",
---     tag = "0.2.0",
+--     tag = "0.3.0",
 -- }
 
 description = {
-    summary = "Lua library for accessing the Twitter REST API v1.1",
+    summary = "Lua library for accessing the Twitter REST and Streaming API v1.1",
     detailed = [[
-        Lua library for accessing the Twitter REST API v1.1.
+        Lua library for accessing the Twitter REST and Streaming API v1.1.
         It implements simple parameter checking and returns metatable-typed JSON data.
     ]],
     homepage = "https://github.com/darkstalker/LuaTwit",
@@ -29,14 +29,13 @@ dependencies = {
     "dkjson >= 2.5",
     "lua-curl >= 0.3.1",
     "oauth_light >= 0.1",
-    "penlight >= 1.3.1",
 }
 
 build = {
     type = "builtin",
     modules = {
         luatwit = "src/luatwit.lua",
-        ["luatwit.async"] = "src/luatwit/async.lua",
+        ["luatwit.http"] = "src/luatwit/http.lua",
         ["luatwit.objects"] = "src/luatwit/objects.lua",
         ["luatwit.resources"] = "src/luatwit/resources.lua",
         ["luatwit.util"] = "src/luatwit/util.lua",
