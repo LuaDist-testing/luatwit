@@ -1,17 +1,17 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "luatwit"
-version = "0.1.0-1"
+version = "0.2.0-1"
 
 -- LuaDist source
 source = {
-  tag = "0.1.0-1",
+  tag = "0.2.0-1",
   url = "git://github.com/LuaDist-testing/luatwit.git"
 }
 -- Original source
 -- source = {
 --     url = "git://github.com/darkstalker/LuaTwit.git",
---     tag = "0.1.0",
+--     tag = "0.2.0",
 -- }
 
 description = {
@@ -26,9 +26,9 @@ description = {
 
 dependencies = {
     "lua >= 5.1",
-    "oauth >= 0.0.5",
     "dkjson >= 2.5",
-    "lanes >= 3.9.4",
+    "lua-curl >= 0.3.1",
+    "oauth_light >= 0.1",
     "penlight >= 1.3.1",
 }
 

@@ -3,14 +3,14 @@
 -- @module  luatwit
 -- @author  darkstalker <https://github.com/darkstalker>
 -- @license MIT/X11
-local assert, error, io_open, ipairs, next, pairs, pcall, require, select, setmetatable, tostring, type, unpack =
-      assert, error, io.open, ipairs, next, pairs, pcall, require, select, setmetatable, tostring, type, unpack
-local oauth = require "OAuth"
-local lt_async = require "luatwit.async"
+local assert, error, io_open, ipairs, next, pairs, require, select, setmetatable, table_concat, type =
+      assert, error, io.open, ipairs, next, pairs, require, select, setmetatable, table.concat, type
+local oauth = require "oauth_light"
 local json = require "dkjson"
-local util = require "luatwit.util"
-local helpers = require "OAuth.helpers"
+local curl = require "lcurl"
 local config = require "pl.config"
+local lt_async = require "luatwit.async"
+local util = require "luatwit.util"
 
 local _M = {}
 
@@ -37,8 +37,7 @@ local function build_request(base_url, path, args, rules, defaults)
         request[key] = nil
         return val
     end)
-    local url = base_url .. path .. ".json"
-    return url, request
+    return base_url:format(path), request
 end
 
 -- Applies type metatables to the supplied JSON data recursively.
@@ -63,7 +62,7 @@ local function apply_types(objects, node, tname)
             end
         end
     else
-        error("subtype declaration must be string or table")
+        error "subtype declaration must be string or table"
     end
     return node
 end
@@ -93,12 +92,9 @@ end
 -- @param defaults  Default method arguments.
 -- @param name      API method name. Used internally for building error messages.
 -- @return      A table with the decoded JSON data from the response, or `nil` on error.
---              If the option `_raw` is set, instead returns an unprocessed JSON string.
 --              If the option `_async` or `_callback` is set, instead it returns a `luatwit.async.future` object.
 -- @return      HTTP headers. On error, instead it will be a string or a `luatwit.objects.error` describing the error.
--- @return      If the option `_raw` is set, the type name from `resources`.
---              This value is needed to use `api:parse_json` with the returned string.
---              If an API error ocurred, instead it will be the HTTP headers of the request.
+-- @return      If an API error ocurred, the HTTP headers of the request.
 function api:raw_call(method, path, args, mp, base_url, tname, rules, defaults, name)
     args = args or {}
     name = name or "raw_call"
@@ -106,61 +102,35 @@ function api:raw_call(method, path, args, mp, base_url, tname, rules, defaults, 
     assert(util.check_args(args, rules, name))
     assert(not args._callback or self.callback_handler, "need callback handler")
 
-    local url, request = build_request(base_url, path, args, rules.optional, defaults)
+    local url, request = build_request(base_url, path, args, rules and rules.optional, defaults)
 
-    local function parse_response(res_code, headers, _, body)
-        -- The method crashed, error is on second arg
-        if res_code == nil then
-            return nil, headers
-        end
-        -- OAuth.PerformRequest returns body = {} on error and the error string in 'res_code'
-        if type(body) ~= "string" then
-            return nil, res_code
-        end
-        if args._raw then
-            return body, headers, tname
-        end
-        apply_types(self.objects, headers, "headers")
-        local json_data, err = self:parse_json(body, tname)
-        if json_data == nil then
+    local function parse_response(body, res_code, headers)
+        local data, err = self:_parse_response(body, res_code, headers, tname)
+        if data == nil then
             return nil, err, headers
         end
-        set_client_field(json_data, self._get_client)
-        json_data._source = name
-        if next(request) then
-            json_data._request = request
+        if type(data) == "table" and data._type then
+            data._source = name
+            if next(request) then
+                data._request = request
+            end
+            if data._type == "error" then
+                return nil, data, headers
+            end
         end
-        if json_data._type == "error" then
-            return nil, json_data, headers
-        end
-        return json_data, headers
+        return data, headers
     end
 
-    local req_body, req_headers = request
-    if mp then
-        local req = helpers.multipart.Request(request)
-        req_body, req_headers = req.body, req.headers
-    end
+    local req_url, req_body, req_headers = oauth.build_request(method, url, request, self.oauth_config, mp)
 
-    if args._async or args._callback then
-        local fut = self.async:oauth_request(method, url, req_body, req_headers, parse_response)
-        if args._callback then
-            return fut, self.callback_handler(fut, args._callback)
-        end
-        return fut
-    else
-        local client = self.oauth_client
-        return parse_response(util.shift_pcall_error(pcall(client.PerformRequest, client, method, url, req_body, req_headers)))
-    end
+    return self:http_request{
+        method = method, url = req_url, body = req_body, headers = req_headers,
+        _async = args._async, _callback = args._callback, _filter = parse_response,
+    }
 end
 
---- Parses a JSON string and applies type metatables.
---
--- @param str   JSON string.
--- @param tname Result type name as defined in `resources`.
---              If set, the function will set type metatables.
--- @return      A table with the decoded JSON data, or `nil` on error.
-function api:parse_json(str, tname)
+-- Parses a JSON string and applies type metatables.
+local function parse_json(self, str, tname)
     local json_data, _, err = json.decode(str, nil, nil, nil)
     if json_data == nil then
         return nil, err
@@ -173,40 +143,48 @@ function api:parse_json(str, tname)
     end
     if tname then
         apply_types(self.objects, json_data, tname)
+        set_client_field(json_data, self._get_client)
     end
     return json_data
 end
 
---- Begins the OAuth authorization.
--- This method generates the URL that the user must visit to authorize the app and get the PIN needed for `api:confirm_login`.
---
--- @return      Authorization URL.
--- @return      HTTP Authorization header.
-function api:start_login()
-    self.oauth_client:RequestToken{ oauth_callback = "oob" }
-    return self.oauth_client:BuildAuthorizationUrl()
+-- Parses a form encoded OAuth token.
+local function parse_oauth_token(self, body, tname)
+    local token = oauth.form_decode_pairs(body)
+    if token.oauth_token == nil or token.oauth_token_secret == nil then
+        return nil, "received invalid token"
+    end
+    self.oauth_config.oauth_token = token.oauth_token
+    self.oauth_config.oauth_token_secret = token.oauth_token_secret
+    return apply_types(self.objects, token, "access_token")
 end
 
---- Finishes the OAuth authorization.
--- This method receives the PIN number obtained in the `api:start_login` step and authorizes the client to make API calls.
---
--- @param pin   PIN number obtained after the user succefully authorized the app.
--- @return      An `access_token` object.
--- @return      HTTP Status line.
--- @return      HTTP result code.
--- @return      HTTP headers.
-function api:confirm_login(pin)
-    local token, res_code, headers, status_line = self.oauth_client:GetAccessToken{ oauth_verifier = tostring(pin) }
-    -- send the keys to the async service
-    if token then
-        --FIXME: could update the keys with a message, but not worth the trouble because the OAuth client should be outside of the
-        --       thread and only raw HTTP requests should be done in background. Can't do this without ugly hacks using the oauth
-        --       lib internals. Or with another OAuth lib that lets me do my own HTTP requests.
-        self.async:stop()
-        self.async.args[4].OAuthToken = token.oauth_token
-        self.async.args[4].OAuthTokenSecret = token.oauth_token_secret
+-- Parses the response body according to the content-type value.
+function api:_parse_response(body, res_code, headers, tname)
+    -- The method failed, error is on second arg
+    if body == nil then
+        return nil, res_code
     end
-    return apply_types(self.objects, token, "access_token"), status_line, res_code, headers
+    -- HTTP request failed
+    if res_code ~= 200 then
+        return nil, headers[1]
+    end
+    apply_types(self.objects, headers, "headers")
+    local content_type = headers:get_content_type()
+    if content_type == "application/json" then
+        return parse_json(self, body, tname)
+    elseif tname == "access_token" then -- twitter returns "text/html" as content-type for the tokens..
+        return parse_oauth_token(self, body, tname)
+    else
+        return body
+    end
+end
+
+--- Generates the OAuth authorization URL.
+--
+-- @return      Authorization URL.
+function api:oauth_authorize_url()
+    return self.resources._authorize_url .. "?oauth_token=" .. oauth.url_encode(self.oauth_config.oauth_token)
 end
 
 --- Sets the callback handler function.
@@ -225,7 +203,9 @@ local http_request_args = {
         url = "string",
     },
     optional = {
-        body = "string",
+        method = "string",
+        body = "any",   -- string or table
+        headers = "table",
     },
 }
 
@@ -238,15 +218,49 @@ function api:http_request(args)
     assert(util.check_args(args, http_request_args, "http_request"))
     assert(not args._callback or self.callback_handler, "need callback handler")
 
+    local req = curl.easy()
+    req:setopt_url(args.url)
+    :setopt_accept_encoding ""
+    if args.method then req:setopt_customrequest(args.method) end
+    if args.headers then req:setopt_httpheader(util.join_pairs(args.headers, ": ")) end
+
+    if args.body then
+        if type(args.body) == "table" then  -- multipart
+            local form = curl.form()
+            for k, v in pairs(args.body) do
+                if type(v) == "table" then
+                    form:add_buffer(k, v.filename, v.data)
+                else
+                    form:add_content(k, v)
+                end
+            end
+            req:setopt_httppost(form)
+        else
+            req:setopt_postfields(args.body)
+        end
+    end
+
     if args._async or args._callback then
-        local fut = self.async:http_request(args.url, args.body)
+        local fut = self.async:http_request(req, args._filter)
         if args._callback then
             return fut, self.callback_handler(fut, args._callback)
         end
         return fut
     else
-        local client = require(args.url:find "^https:" and "ssl.https" or "socket.http")
-        return client.request(args.url, args.body)
+        local resp_body, resp_headers = {}, {}
+        req:setopt_writefunction(util.table_writer, resp_body)
+        :setopt_headerfunction(util.table_writer, resp_headers)
+
+        local code = req:perform():getinfo(curl.INFO_RESPONSE_CODE)
+        req:close()
+        local body = table_concat(resp_body)
+        local headers = util.parse_headers(resp_headers)
+
+        if args._filter then
+            return args._filter(body, code, headers)
+        else
+            return body, code, headers
+        end
     end
 end
 
@@ -270,23 +284,28 @@ local api_new_args = {
 -- An object created with only the consumer keys must call `api:start_login` and `api:confirm_login` to get the access token,
 -- otherwise it won't be able to make API calls.
 --
--- @param args      Table with the OAuth keys (consumer_key, consumer_secret, oauth_token, oauth_token_secret).
--- @param threads   Number of threads for the async requests (default 1).
+-- @param keys      Table with the OAuth keys (consumer_key, consumer_secret, oauth_token, oauth_token_secret).
 -- @param resources Table with the API interface definition (default `luatwit.resources`).
 -- @param objects   Table with the API objects definition (default `luatwit.objects`).
 -- @return          New instance of the `api` class.
 -- @see luatwit.objects.access_token
-function api.new(args, threads, resources, objects)
-    assert(util.check_args(args, api_new_args, "api.new"))
+function api.new(keys, resources, objects)
+    assert(util.check_args(keys, api_new_args, "api.new"))
 
     local self = {
         __index = api_index,
         resources = resources or require("luatwit.resources"),
         objects = objects or require("luatwit.objects"),
+        oauth_config = {
+            consumer_key = keys.consumer_key,
+            consumer_secret = keys.consumer_secret,
+            oauth_token = keys.oauth_token,
+            oauth_token_secret = keys.oauth_token_secret,
+            sig_method = "HMAC-SHA1",
+            use_auth_header = true,
+        },
     }
-    local endpoints = self.resources._endpoints
-    self.oauth_client = oauth.new(args.consumer_key, args.consumer_secret, endpoints, { OAuthToken = args.oauth_token, OAuthTokenSecret = args.oauth_token_secret })
-    self.async = lt_async.service.new(args, endpoints, threads)
+    self.async = lt_async.service.new()
     self._get_client = function() return self end
 
     return setmetatable(self, self)
@@ -338,7 +357,7 @@ function _M.attach_file(filename)
         return nil, err
     end
     local res = {
-        filename = filename:match "([^/]*)$",
+        filename = filename:match "[^/]*$",
         data = file:read "*a",
     }
     file:close()

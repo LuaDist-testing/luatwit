@@ -3,8 +3,8 @@
 -- @module  luatwit.util
 -- @author  darkstalker <https://github.com/darkstalker>
 -- @license MIT/X11
-local assert, error, getmetatable, ipairs, pairs, rawget, select, setmetatable, table_concat, tonumber, tostring, type =
-      assert, error, getmetatable, ipairs, pairs, rawget, select, setmetatable, table.concat, tonumber, tostring, type
+local assert, error, ipairs, pairs, setmetatable, table_concat, tonumber, tostring, type =
+      assert, error, ipairs, pairs, setmetatable, table.concat, tonumber, tostring, type
 
 local _M = {}
 
@@ -167,6 +167,13 @@ function type_handlers.file(x)
     end
 end
 
+-- type "table": accept only tables
+function type_handlers.table(x)
+    if type(x) == "table" then
+        return x
+    end
+end
+
 --- Checks if the arguments in the specified table match the rules.
 --
 -- @param args      Table with arguments to be checked.
@@ -206,19 +213,6 @@ function _M.check_args(args, rules, r_name)
         end
     end
     return args
-end
-
---- Removes the first value from a `pcall` result and returns errors in Lua style.
---
--- @param ok        Success status from `pcall`.
--- @param ...       List of returned values.
--- @return          On success, the function return values. On failure `nil`.
--- @return          The error string.
-function _M.shift_pcall_error(ok, ...)
-    if not ok then
-        return nil, ...
-    end
-    return ...
 end
 
 --- Performs an API call with the data on a resource object.
@@ -284,6 +278,47 @@ function _M.resource_builder(method, path)
         path = path,
     }
     return setmetatable(res, resource_builder_mt)
+end
+
+--- Creates a list from a table by joining key-value pairs.
+--
+-- @param tbl       Source table.
+-- @param sep       Separator used to join the keys and values.
+-- @return          List table.
+function _M.join_pairs(tbl, sep)
+    local res = {}
+    for k, v in pairs(tbl) do
+        res[#res + 1] = k .. sep .. v
+    end
+    return res
+end
+
+--- Extracts key-value pairs from a HTTP headers list.
+--
+-- @param list      List table with the header strings.
+-- @return          Headers table.
+function _M.parse_headers(list)
+    local headers = {}
+    for _, line in ipairs(list) do
+        line = line:gsub("\r?\n$", "")
+        local k, v = line:match "^([^:]+): (.*)"
+        if not k then   -- status line
+            if line ~= "" then
+                headers[#headers + 1] = line
+            end
+        else
+            headers[k:lower()] = v  -- case insensitive
+        end
+    end
+    return headers
+end
+
+--- Appends data to a table.
+--
+-- @param tbl       Destination table.
+-- @param data      Data to append.
+function _M.table_writer(tbl, data)
+    tbl[#tbl + 1] = data
 end
 
 return _M

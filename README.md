@@ -5,9 +5,9 @@ It implements simple parameter checking and returns metatable-typed JSON data.
 
 ## Dependencies
 
-- oauth
 - dkjson
-- lanes
+- lua-curl
+- oauth_light
 - penlight
 
 Also you'll need `ldoc` if you want to generate the docs.
